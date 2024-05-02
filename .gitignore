@@ -15,3 +15,5 @@ gha-creds-*.json
 # images need to be explicitly added
 *.png
 .idea
+presto.egg-info
+.run

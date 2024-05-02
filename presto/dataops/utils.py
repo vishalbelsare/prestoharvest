@@ -6,6 +6,7 @@ from .pipelines.dynamicworld import DynamicWorld2020_2021
 from .pipelines.s1_s2_era5_srtm import (
     BANDS,
     ERA5_BANDS,
+    NORMED_BANDS,
     REMOVED_BANDS,
     S1_BANDS,
     S1_S2_ERA5_SRTM,
@@ -26,6 +27,24 @@ def construct_single_presto_input(
     dynamic_world: Optional[torch.Tensor] = None,
     normalize: bool = True,
 ):
+    """
+    Inputs are paired into a tensor input <X> and a list <X>_bands, which describes <X>.
+
+    <X> should have shape (num_timesteps, len(<X>_bands)), with the following bands possible for
+    each input:
+
+    s1: ["VV", "VH"]
+    s2: ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B10", "B11", "B12"]
+    era5: ["temperature_2m", "total_precipitation"]
+        "temperature_2m": Temperature of air at 2m above the surface of land,
+            sea or in-land waters in Kelvin (K)
+        "total_precipitation": Accumulated liquid and frozen water, including rain and snow,
+            that falls to the Earth's surface. Measured in metres (m)
+    srtm: ["elevation", "slope"]
+
+    dynamic_world is a 1d input of shape (num_timesteps,) representing the dynamic world classes
+        of each timestep for that pixel
+    """
     num_timesteps_list = [x.shape[0] for x in [s1, s2, era5, srtm] if x is not None]
     if dynamic_world is not None:
         num_timesteps_list.append(len(dynamic_world))
@@ -60,8 +79,15 @@ def construct_single_presto_input(
     if dynamic_world is None:
         dynamic_world = torch.ones(num_timesteps) * (DynamicWorld2020_2021.class_amount)
 
+    keep_indices = [idx for idx, val in enumerate(BANDS) if val != "B9"]
+    mask = mask[:, keep_indices]
+
     if normalize:
-        keep_indices = [idx for idx, val in enumerate(BANDS) if val != "B9"]
-        mask = mask[:, keep_indices]
+        # normalize includes x = x[:, keep_indices]
         x = S1_S2_ERA5_SRTM.normalize(x)
+        if s2_bands is not None:
+            if ("B8" in s2_bands) and ("B4" in s2_bands):
+                mask[:, NORMED_BANDS.index("NDVI")] = 0
+    else:
+        x = x[:, keep_indices]
     return x, mask, dynamic_world

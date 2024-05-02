@@ -1,6 +1,7 @@
 """
 This file contains extensions of CropHarvest classes
 """
+import logging
 import math
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -43,14 +44,17 @@ from rasterio import mask
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
+from .. import utils
 from ..dataops.pipelines.dynamicworld import DynamicWorld2020_2021, pad_array
-from ..utils import data_dir
 
-cropharvest_data_dir = data_dir / "cropharvest_data"
+logger = logging.getLogger("__main__")
+
+
+def cropharvest_data_dir() -> Path:
+    return utils.data_dir / "cropharvest_data"
 
 
 class DynamicWorldExporter(EarthEngineExporter):
-
     output_folder_name = "dynamic_world_data"
     test_output_folder_name = "test_dynamic_world_data"
     data_dir: Path
@@ -59,7 +63,7 @@ class DynamicWorldExporter(EarthEngineExporter):
     def load_default_labels(
         dataset: Optional[str], start_from_last, checkpoint: Optional[Path]
     ) -> geopandas.GeoDataFrame:
-        labels = geopandas.read_file(cropharvest_data_dir / LABELS_FILENAME)
+        labels = geopandas.read_file(cropharvest_data_dir() / LABELS_FILENAME)
         export_end_year = pd.to_datetime(labels[RequiredColumns.EXPORT_END_DATE]).dt.year
         labels["end_date"] = export_end_year.apply(
             lambda x: date(x, EXPORT_END_MONTH, EXPORT_END_DAY)
@@ -92,7 +96,7 @@ class DynamicWorldExporter(EarthEngineExporter):
     ) -> bool:
         filename = str(polygon_identifier)
         if (checkpoint is not None) and (checkpoint / f"{filename}.tif").exists():
-            print("File already exists! Skipping")
+            logger.warning("File already exists! Skipping")
             return False
 
         # Description of the export cannot contain certrain characters
@@ -140,7 +144,6 @@ class DynamicWorldExporter(EarthEngineExporter):
 
     @staticmethod
     def tif_to_npy(path_to_file: Path, lat: float, lon: float, num_timesteps: int):
-
         da = xr.open_rasterio(path_to_file)
         closest_lon = Engineer.find_nearest(da.x, lon)
         closest_lat = Engineer.find_nearest(da.y, lat)
@@ -166,7 +169,6 @@ class Engineer(CropHarvestEngineer):
     def tif_to_nps(
         cls, satellite_file: Path, dynamic_world_file: Path, row: pd.Series, num_timesteps: int
     ) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
-
         if (not satellite_file.exists()) or (not dynamic_world_file.exists()):
             return None
 
@@ -202,7 +204,6 @@ class Engineer(CropHarvestEngineer):
     def process_fuel_moisture_files(
         cls, satellite_file: Path, dynamic_world_file: Path, row: pd.Series, num_timesteps: int
     ) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, float, np.ndarray, int, str]]:
-
         nps = cls.tif_to_nps(satellite_file, dynamic_world_file, row, num_timesteps)
         if nps is None:
             return None
@@ -218,7 +219,6 @@ class Engineer(CropHarvestEngineer):
     def process_algal_bloom_files(
         cls, satellite_file: Path, dynamic_world_file: Path, row: pd.Series, num_timesteps: int
     ) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, float, np.ndarray, int, str]]:
-
         nps = cls.tif_to_nps(satellite_file, dynamic_world_file, row, num_timesteps)
         if nps is None:
             return None
@@ -330,7 +330,7 @@ class Engineer(CropHarvestEngineer):
         for region_identifier, _ in TEST_REGIONS.items():
             all_region_files = list(self.test_eo_files.glob(f"{region_identifier}*.tif"))
             if len(all_region_files) == 0:
-                print(f"No downloaded files for {region_identifier}")
+                logger.info(f"No downloaded files for {region_identifier}")
                 continue
             for region_idx, filepath in enumerate(all_region_files):
                 instance_name, test_instance = self.process_test_file_with_region(
@@ -529,16 +529,17 @@ class CropHarvest(BaseDataset):
         val_ratio: float = 0.0,
         is_val: bool = False,
         ignore_dynamic_world: bool = False,
+        start_month: int = 1,
     ):
         super().__init__(root, download, filenames=(FEATURES_DIR, TEST_FEATURES_DIR))
 
         labels = CropHarvestLabels(root, download=download)
         if task is None:
-            print("Using the default task; crop vs. non crop globally")
+            logger.info("Using the default task; crop vs. non crop globally")
             task = Task()
         self.task = task
         self.ignore_dynamic_world = ignore_dynamic_world
-
+        self.start_month = start_month
         self.normalizing_dict = load_normalizing_dict(
             Path(root) / f"{FEATURES_DIR}/normalizing_dict.h5"
         )
@@ -586,7 +587,7 @@ class CropHarvest(BaseDataset):
     def __len__(self) -> int:
         return len(self.filepaths)
 
-    def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    def __getitem__(self, index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
         hf = h5py.File(self.filepaths[index][0], "r")
         lat = hf.attrs["instance_lat"]
         lon = hf.attrs["instance_lon"]
@@ -598,6 +599,7 @@ class CropHarvest(BaseDataset):
             dynamic_world,
             np.array([lat, lon]),
             self.y_vals[index],
+            self.start_month,
         )
 
     @property
@@ -635,7 +637,7 @@ class CropHarvest(BaseDataset):
                 )
             indices_to_sample = pos_indices[:k] + neg_indices[:k]
 
-        X, dw, latlons, Y = zip(*[self[i] for i in indices_to_sample])
+        X, dw, latlons, Y, _ = zip(*[self[i] for i in indices_to_sample])
         X_np, dw_np, latlons_np, y_np = np.stack(X), np.stack(dw), np.stack(latlons), np.stack(Y)
 
         if flatten_x:
@@ -698,6 +700,7 @@ class CropHarvest(BaseDataset):
         download: bool = True,
         normalize: bool = True,
         ignore_dynamic_world: bool = False,
+        start_month: int = 1,
     ) -> List:
         r"""
         Create the benchmark datasets.
@@ -735,6 +738,7 @@ class CropHarvest(BaseDataset):
                                 task,
                                 download=download,
                                 ignore_dynamic_world=ignore_dynamic_world,
+                                start_month=start_month,
                             )
                         )
 
@@ -750,6 +754,7 @@ class CropHarvest(BaseDataset):
                     Task(country_bbox, None, test_identifier=test_dataset, normalize=normalize),
                     download=download,
                     ignore_dynamic_world=ignore_dynamic_world,
+                    start_month=start_month,
                 )
             )
         return output_datasets
@@ -777,7 +782,7 @@ class CropHarvest(BaseDataset):
 
         # returns a list of [pos_index, neg_index, pos_index, neg_index, ...]
         indices = [val for pair in zip(pos_indices, neg_indices) for val in pair]
-        output_x, dw, latlons, output_y = zip(*[self[i] for i in indices])
+        output_x, dw, latlons, output_y, _ = zip(*[self[i] for i in indices])
 
         x = np.stack(output_x, axis=0)
         return x, np.stack(dw, axis=0), np.stack(latlons, axis=0), np.array(output_y)
@@ -791,7 +796,6 @@ class CropHarvest(BaseDataset):
         return self.task.id
 
     def _get_positive_and_negative_indices(self) -> Tuple[List[int], List[int]]:
-
         positive_indices: List[int] = []
         negative_indices: List[int] = []
 

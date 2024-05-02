@@ -36,7 +36,7 @@ encoder_only = encoder_decoder.encoder
 # to add a linear transformation to the encoder's output for finetuning
 finetuning_model = encoder_decoder.construct_finetuning_model(num_outputs=1, regression=True)
 ```
-The default arguments to `construct` are the same as the default parameters described in [`default.json`](presto/config/default.json).
+The default arguments to `construct` are the same as the default parameters described in [`default.json`](config/default.json).
 
 Presto expects the following values as input, and returns the following outputs:
 ```python
@@ -47,7 +47,7 @@ globally_pooled_tokens = encoder(x, dynamic_world, latlons, mask, month, eval_ta
 predictions = finetuning_model(x, dynamic_world, latlons, mask, month)
 ```
 - `x`: *torch.Tensor* of shape `[batch_size, num_timesteps, bands]` where `bands` is described by [`NORMED_BANDS`](presto/dataops/pipelines/s1_s2_era5_srtm.py).
-- `dynamic_world`: *torch.Tensor* of shape `[batch_size, num_timesteps]`. If no Dynamic World classes are available, this tensor should be filled with the value [`DynamicWorld2020_2021.class_amount + 1`](presto/dataops/pipelines/dynamicworld.py) (i.e. `10`), in which case it is ignored.
+- `dynamic_world`: *torch.Tensor* of shape `[batch_size, num_timesteps]`. If no Dynamic World classes are available, this tensor should be filled with the value [`DynamicWorld2020_2021.class_amount`](presto/dataops/pipelines/dynamicworld.py) (i.e. `9`), in which case it is ignored.
 - `latlons`: *torch.Tensor* of shape `[batch_size, 2]` describing the latitude and longitude of each input instance.
 - `mask`: An optional *torch.Tensor* of shape `[batch_size, num_timesteps, bands]`. `mask[i, j, k] == 1` means `x[i, j, k]` is considered masked. If the mask is `None`, no values in `x` are ignored.
 - `month`: An *int* or *torch.Tensor* describing the first month of the instances being passed. If an *int*, all instances in the batch are assumed to have the same starting month.
@@ -66,7 +66,7 @@ x, mask, dynamic_world = presto.construct_single_presto_input(
 )
 ```
 Here, `x` will contain only the (normalized) RGB values in the correct indices, and `mask` will communicate to Presto to ignore every other input.
-Similarly, `dynamic_world` will contain only `DynamicWorld2020_2021.class_amount + 1`, so Presto will ignore it.
+Similarly, `dynamic_world` will contain only `DynamicWorld2020_2021.class_amount`, so Presto will ignore it.
 
 ### Training
 
@@ -174,7 +174,7 @@ If you find this code useful, please cite the following paper:
 ```
 @misc{tseng2023lightweight,
       title={Lightweight, Pre-trained Transformers for Remote Sensing Timeseries},
-      author={Gabriel Tseng and Ivan Zvonkov and Mirali Purohit and David Rolnick and Hannah Kerner},
+      author={Gabriel Tseng and Ruben Cartuyvels and Ivan Zvonkov and Mirali Purohit and David Rolnick and Hannah Kerner},
       year={2023},
       eprint={2304.14065},
       archivePrefix={arXiv},
